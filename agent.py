@@ -1,109 +1,54 @@
-from dotenv import load_dotenv
-import os
+# Import necessary libraries
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
 
-# LangChain and related imports
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_astradb import AstraDBVectorStore
-from langchain.agents import create_tool_calling_agent
-from langchain.agents import AgentExecutor
-from langchain.tools.retriever import create_retriever_tool
-from langchain import hub
-from github import fetch_github_issues  # Custom function to fetch GitHub issues
-from note import note_tool  # Custom tool for managing notes
+# Simulated data for the AI Agent
+print("Step 1: Generating data for the AI agent...")
+data_size = 100
+np.random.seed(42)  # For reproducibility
+X = np.random.rand(data_size, 1) * 10  # Random input values (feature)
+y = 2 * X.squeeze() + np.random.randn(data_size) * 2  # Target = 2*X + noise
 
-# Load environment variables from a .env file
-load_dotenv()
+# Convert to DataFrame
+data = pd.DataFrame({'Feature': X.squeeze(), 'Target': y})
+print("Sample Data:")
+print(data.head())
 
-# Function to initialize and connect to the AstraDB Vector Store
-def initialize_vectorstore():
-    """
-    Establishes a connection to the AstraDB vector store using API endpoint,
-    token, and namespace from environment variables. Embeddings are provided
-    via OpenAIEmbeddings.
-    """
-    # Initialize embeddings for storing and searching documents
-    openai_embeddings = OpenAIEmbeddings()
+# Split data into training and testing sets
+print("\nStep 2: Splitting the data into train and test sets...")
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Load API credentials and keyspace (namespace) from environment variables
-    astra_api_endpoint = os.getenv("ASTRA_DB_API_ENDPOINT")
-    astra_app_token = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
-    astra_namespace = os.getenv("ASTRA_DB_KEYSPACE")
+# Initialize and train the AI agent (Linear Regression Model)
+print("\nStep 3: Training the Linear Regression model...")
+model = LinearRegression()
+model.fit(X_train, y_train)
 
-    # Set namespace, defaulting to None if not provided
-    if astra_namespace:
-        astra_keyspace = astra_namespace
+# Test the AI agent
+print("\nStep 4: Testing the AI agent...")
+y_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_pred)
+
+# Display results
+print(f"Mean Squared Error on Test Data: {mse:.2f}")
+print("\nPredictions vs Actual Values:")
+for i in range(5):  # Show first 5 predictions
+    print(f"Input: {X_test[i][0]:.2f} | Prediction: {y_pred[i]:.2f} | Actual: {y_test[i]:.2f}")
+
+# Simple decision-making function for the AI agent
+def ai_decision(input_value):
+    """AI Agent makes a simple decision based on the model's prediction."""
+    prediction = model.predict(np.array([[input_value]]))
+    if prediction > 10:
+        return f"Prediction: {prediction[0]:.2f} -> Decision: HIGH VALUE"
     else:
-        astra_keyspace = None
+        return f"Prediction: {prediction[0]:.2f} -> Decision: LOW VALUE"
 
-    # Create and return a connection to the AstraDB vector store
-    vectorstore = AstraDBVectorStore(
-        embedding=openai_embeddings,
-        collection_name="github",  # Name of the collection in the DB
-        api_endpoint=astra_api_endpoint,
-        token=astra_app_token,
-        namespace=astra_keyspace,
-    )
-    return vectorstore
+# Let the AI agent make a decision
+print("\nStep 5: Let the AI agent make a decision...")
+test_input = float(input("Enter a value for the agent to evaluate: "))
+result = ai_decision(test_input)
+print(result)
 
-
-# Initialize the vector store connection
-vector_store = initialize_vectorstore()
-
-# Ask user if they want to fetch and update GitHub issues in the vector store
-update_issues_flag = input("Do you want to update the issues? (y/N): ").lower() in [
-    "yes",
-    "y",
-]
-
-if update_issues_flag:
-    """
-    Fetch GitHub issues, delete the current vector store collection (if exists),
-    and add the fetched issues to the vector store.
-    """
-    github_owner = "techwithtim"  # GitHub repository owner
-    github_repo = "Flask-Web-App-Tutorial"  # GitHub repository name
-
-    # Fetch GitHub issues
-    fetched_issues = fetch_github_issues(github_owner, github_repo)
-
-    try:
-        # Delete existing collection in the vector store
-        vector_store.delete_collection()
-    except:
-        pass  # Ignore errors if collection does not exist
-
-    # Re-initialize the vector store and add the fetched issues
-    vector_store = initialize_vectorstore()
-    vector_store.add_documents(fetched_issues)
-
-# Create a retriever tool for querying the vector store
-retriever_instance = vector_store.as_retriever(search_kwargs={"k": 3})
-retriever_tool = create_retriever_tool(
-    retriever_instance,
-    "github_search",
-    "Search for information about GitHub issues. For any questions about GitHub issues, you must use this tool!",
-)
-
-# Pull a predefined prompt template from the LangChain hub
-prompt_template = hub.pull("hwchase17/openai-functions-agent")
-
-# Initialize the language model
-language_model = ChatOpenAI()
-
-# Define tools available to the agent
-tools_list = [retriever_tool, note_tool]
-
-# Create an agent for tool calling
-agent_instance = create_tool_calling_agent(language_model, tools_list, prompt_template)
-
-# Create an agent executor to handle user queries
-agent_executor = AgentExecutor(agent=agent_instance, tools=tools_list, verbose=True)
-
-# Main loop to interact with the user
-while (user_question := input("Ask a question about GitHub issues (q to quit): ")) != "q":
-    """
-    Continuously take user input (questions about GitHub issues) and invoke the
-    agent executor to process the input and provide answers.
-    """
-    response = agent_executor.invoke({"input": user_question})
-    print(response["output"])
